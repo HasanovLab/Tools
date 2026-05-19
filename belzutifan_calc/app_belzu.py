@@ -383,10 +383,7 @@ if missing_cols:
     raise ValueError(f"CSV missing columns: {missing_cols}; available: {list(df_all.columns)[:30]}")
 
 _raw = safe_pickle_load(ALL_MODELS_PKL)
-if isinstance(_raw, dict):
-    model = _raw["rsf"]
-else:
-    model = _raw
+model = _raw["models"]["rsf"]
 
 explainer = safe_pickle_load(EXPLAINER_PKL)
 meta = load_metadata(METADATA_JSON)
