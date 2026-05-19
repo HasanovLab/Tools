@@ -21,15 +21,195 @@ from lifelines import CoxPHFitter
 
 # =========================
 # Pipeline class stubs
-# Required to unpickle best_model pkl
-# Only predict() methods are needed at inference time
+# Required to unpickle all_models.pkl
+# Classes mirror survival_pipeline.py exactly so pickle deserialization works
 # =========================
 import sys as _sys
 import types as _types
+import xgboost as xgb
+from catboost import CatBoostRegressor
+from lightgbm import LGBMRegressor
+import lightgbm as lgb
+from scipy.optimize import minimize
+from sksurv.metrics import concordance_index_censored
 
+
+class PairwiseZMeanEnsemble:
+    def __init__(self, model_a, model_b, name_a, name_b):
+        self.model_a = model_a; self.model_b = model_b
+        self.name_a = name_a; self.name_b = name_b
+        self.mu_a = 0.0; self.sd_a = 1.0; self.mu_b = 0.0; self.sd_b = 1.0
+
+    def fit_scaler(self, X_ref):
+        pa = np.asarray(self.model_a.predict(X_ref)).ravel()
+        pb = np.asarray(self.model_b.predict(X_ref)).ravel()
+        self.mu_a = float(np.nanmean(pa)); self.sd_a = float(np.nanstd(pa) + 1e-12)
+        self.mu_b = float(np.nanmean(pb)); self.sd_b = float(np.nanstd(pb) + 1e-12)
+
+    def predict(self, X):
+        pa = np.asarray(self.model_a.predict(X)).ravel()
+        pb = np.asarray(self.model_b.predict(X)).ravel()
+        return 0.5 * ((pa - self.mu_a) / self.sd_a + (pb - self.mu_b) / self.sd_b)
+
+
+class XGBoostSurvivalWrapper:
+    def __init__(self, params, seed):
+        self.params = {'objective': 'survival:cox', 'eval_metric': 'cox-nloglik', 'seed': seed, **params}
+        self.num_boost_round = self.params.pop('n_estimators', 100)
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        dtest = xgb.DMatrix(np.asarray(X))
+        return self.model_.predict(dtest)
+
+
+class XGBoostAFTWrapper:
+    def __init__(self, params, seed, aft_loss_distribution='normal'):
+        self.aft_loss_distribution = aft_loss_distribution
+        self.params = {'objective': 'survival:aft', 'eval_metric': 'aft-nloglik',
+                       'aft_loss_distribution': aft_loss_distribution, 'seed': seed, **params}
+        self.num_boost_round = self.params.pop('n_estimators', 100)
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        dtest = xgb.DMatrix(np.asarray(X))
+        return -self.model_.predict(dtest)
+
+
+class CatBoostSurvivalWrapper:
+    def __init__(self, params, seed):
+        self.params = {'loss_function': 'Cox', 'eval_metric': 'Cox',
+                       'random_seed': seed, 'verbose': False, **params}
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        return self.model_.predict(np.asarray(X))
+
+
+class CatBoostAFTWrapper:
+    def __init__(self, params, seed, aft_loss_distribution='normal', scale=None):
+        self.aft_loss_distribution = aft_loss_distribution; self.scale = scale
+        dist_map = {'normal': 'Normal', 'logistic': 'Logistic', 'extreme': 'Extreme'}
+        loss_str = f"SurvivalAft:dist={dist_map.get(aft_loss_distribution.lower(), 'Normal')}"
+        if scale is not None: loss_str += f';scale={scale}'
+        self.params = {'loss_function': loss_str, 'eval_metric': 'SurvivalAft',
+                       'random_seed': seed, 'verbose': False, **params}
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        return -self.model_.predict(np.asarray(X))
+
+
+class StackingEnsemble:
+    def __init__(self, base_models):
+        self.base_models = base_models
+        self.weights = None
+        self.model_names = list(base_models.keys())
+
+    def predict(self, X):
+        if self.weights is None:
+            raise ValueError("Must fit before predict!")
+        predictions = self._get_base_predictions(X)
+        return np.average(predictions, axis=1, weights=self.weights)
+
+    def _get_base_predictions(self, X):
+        return np.column_stack([self.base_models[n].predict(X) for n in self.model_names])
+
+    def get_weights(self):
+        if self.weights is None: return None
+        return {name: w for name, w in zip(self.model_names, self.weights)}
+
+
+class LightGBMSurvivalWrapper:
+    def __init__(self, params, seed):
+        self.params = {'objective': 'regression', 'random_state': seed, 'verbose': -1, **params}
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        return -self.model_.predict(np.asarray(X))
+
+
+class CoxPHSkSurvWrapper:
+    def __init__(self, params, seed):
+        self.params = dict(params); self.seed = seed; self.model_ = None
+
+    def predict(self, X):
+        return np.asarray(self.model_.predict(np.asarray(X))).ravel()
+
+
+class CoxnetSkSurvWrapper:
+    def __init__(self, params, seed):
+        self.params = dict(params); self.seed = seed; self.model_ = None
+        self.alpha_index_ = self.params.pop('alpha_index', None)
+
+    def predict(self, X):
+        pred = np.asarray(self.model_.predict(np.asarray(X)))
+        if pred.ndim == 2:
+            return pred[:, self.alpha_index_].ravel()
+        return pred.ravel()
+
+
+class RSFSkSurvWrapper:
+    def __init__(self, params, seed):
+        self.params = dict(params); self.seed = seed
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        return np.asarray(self.model_.predict(np.asarray(X))).ravel()
+
+
+class ExtraSurvivalTreesWrapper:
+    def __init__(self, params, seed):
+        self.params = dict(params); self.seed = seed
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        return np.asarray(self.model_.predict(np.asarray(X))).ravel()
+
+
+class GBMSurvivalSkSurvWrapper:
+    def __init__(self, params, seed):
+        self.params = dict(params); self.seed = seed
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        return np.asarray(self.model_.predict(np.asarray(X))).ravel()
+
+
+class SurvivalTreeSkSurvWrapper:
+    def __init__(self, params, seed):
+        self.params = dict(params); self.seed = seed
+        self.model_ = None; self.feature_importances_ = None
+
+    def predict(self, X):
+        return np.asarray(self.model_.predict(np.asarray(X))).ravel()
+
+
+class FastSurvivalSVMWrapper:
+    def __init__(self, params, seed):
+        self.params = dict(params); self.seed = seed; self.model_ = None
+
+    def predict(self, X):
+        return np.asarray(self.model_.predict(np.asarray(X, dtype=np.float64))).ravel()
+
+
+# Register all classes in the survival_pipeline module so pickle can find them
 _MOD_NAME = "survival_pipeline"
-
 _mod = _types.ModuleType(_MOD_NAME)
+_mod.PairwiseZMeanEnsemble = PairwiseZMeanEnsemble
+_mod.XGBoostSurvivalWrapper = XGBoostSurvivalWrapper
+_mod.XGBoostAFTWrapper = XGBoostAFTWrapper
+_mod.CatBoostSurvivalWrapper = CatBoostSurvivalWrapper
+_mod.CatBoostAFTWrapper = CatBoostAFTWrapper
+_mod.StackingEnsemble = StackingEnsemble
+_mod.LightGBMSurvivalWrapper = LightGBMSurvivalWrapper
+_mod.CoxPHSkSurvWrapper = CoxPHSkSurvWrapper
+_mod.CoxnetSkSurvWrapper = CoxnetSkSurvWrapper
+_mod.RSFSkSurvWrapper = RSFSkSurvWrapper
+_mod.ExtraSurvivalTreesWrapper = ExtraSurvivalTreesWrapper
+_mod.GBMSurvivalSkSurvWrapper = GBMSurvivalSkSurvWrapper
+_mod.SurvivalTreeSkSurvWrapper = SurvivalTreeSkSurvWrapper
+_mod.FastSurvivalSVMWrapper = FastSurvivalSVMWrapper
 _sys.modules[_MOD_NAME] = _mod
 
 
