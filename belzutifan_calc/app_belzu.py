@@ -1,4 +1,4 @@
-# app.py
+# app_belzu.py
 # -------------------------------------------------------------------
 # Belzutifan RCC OS Calculator
 # best_model: RSF | horizon: 3 years
@@ -27,7 +27,7 @@ from lifelines import CoxPHFitter
 import sys as _sys
 import types as _types
 
-_MOD_NAME = "survival_pipeline_OPTIMIZED_FINAL_STACKING_OOF_ENSEMBLE_full_nestedcv_V8_4_2_paramagg_switch_PATCHED2_v2"
+_MOD_NAME = "survival_pipeline"
 
 _mod = _types.ModuleType(_MOD_NAME)
 _sys.modules[_MOD_NAME] = _mod
@@ -38,11 +38,11 @@ _sys.modules[_MOD_NAME] = _mod
 # =========================
 HERE = Path(__file__).resolve().parent
 
-CANCER_DIR = HERE / "cancer_models" / "Belzutifan_RCC"
-CSV_PATH = CANCER_DIR / "train_data.csv"
-ALL_MODELS_PKL = CANCER_DIR / "best_model_Belzutifan_RCC.pkl"
-EXPLAINER_PKL = CANCER_DIR / "shap_explainer.pkl"
-METADATA_JSON = CANCER_DIR / "metadata.json"
+# All files sit in the same directory as app_belzu.py (belzutifan_calc root)
+CSV_PATH       = HERE / "train_30_encoded.csv"
+ALL_MODELS_PKL = HERE / "all_models.pkl"
+EXPLAINER_PKL  = HERE / "shap_explainer.pkl"
+METADATA_JSON  = HERE / "metadata.json"
 
 MODEL_KEY = "rsf"
 TIME_COL = "os_time_months"
@@ -218,7 +218,7 @@ for k in ["train_idx", "train_index", "train_indices"]:
             pass
 
 if train_idx is None or train_idx.size == 0:
-    npy_path = CANCER_DIR / "train_indices.npy"
+    npy_path = HERE / "train_indices.npy"
     if npy_path.exists():
         train_idx = np.load(npy_path)
         print(f"[INFO] train_idx from train_indices.npy: {len(train_idx)}")
