@@ -382,7 +382,12 @@ if missing_cols:
 if missing_cols:
     raise ValueError(f"CSV missing columns: {missing_cols}; available: {list(df_all.columns)[:30]}")
 
-model = safe_pickle_load(ALL_MODELS_PKL)
+_raw = safe_pickle_load(ALL_MODELS_PKL)
+if isinstance(_raw, dict):
+    model = _raw["rsf"]
+else:
+    model = _raw
+
 explainer = safe_pickle_load(EXPLAINER_PKL)
 meta = load_metadata(METADATA_JSON)
 
@@ -525,34 +530,13 @@ def _predict_risk(m, X_df: pd.DataFrame) -> np.ndarray:
 
 
 def _compute_risk(X_df: pd.DataFrame) -> np.ndarray:
-    return _predict_risk(model, X_df)
-
-
-def _get_inner_model(mdl):
-    """Unwrap our stub wrapper to get the actual fitted sksurv/sklearn model."""
-    # Our RSFSkSurvWrapper stores the real model in .model_
-    if hasattr(mdl, "model_") and mdl.model_ is not None:
-        return mdl.model_
-    return mdl
+    return np.asarray(model.predict(X_df[FEATURE_COLS].values)).reshape(-1)
 
 
 def _compute_survival_curve(mdl, df_train_calib, risk_train, x_one, risk_val):
     times = np.linspace(0.0, SURV_HORIZON, 300)
 
-    # Try direct predict_survival_function on wrapper first
-    inner = _get_inner_model(mdl)
-    for candidate in [mdl, inner]:
-        if hasattr(candidate, "predict_survival_function"):
-            try:
-                X_arr = x_one.values if isinstance(x_one, pd.DataFrame) else np.asarray(x_one)
-                fns = candidate.predict_survival_function(X_arr)
-                fn = fns[0]
-                surv = np.array([fn(t) for t in times], dtype=float)
-                return times, surv
-            except Exception:
-                pass
-
-    # Cox recalibration fallback
+    # Use risk scores from model.predict -> Cox recalibration
     df_c = pd.DataFrame({
         TIME_COL: df_train_calib[TIME_COL].astype(float).values,
         EVENT_COL: df_train_calib[EVENT_COL].astype(int).values,
