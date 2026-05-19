@@ -1,0 +1,21 @@
+{
+  "MODEL_KEY": "rsf",
+  "TRAIN_CSV": "/home/OSUMC.EDU/ozgu02/network/X/Labs/Hasanov/semiha/belzutifan/train_30_encoded.csv",
+  "TEST_CSV": "/home/OSUMC.EDU/ozgu02/network/X/Labs/Hasanov/semiha/belzutifan/test_30_encoded.csv",
+  "ALL_MODELS_PKL": "/home/OSUMC.EDU/ozgu02/network/X/Labs/Hasanov/semiha/belzutifan/belzutifan_simulated_nested5_20260518_210341/all_models.pkl",
+  "OUTDIR": "/home/OSUMC.EDU/ozgu02/network/X/Labs/Hasanov/semiha/belzutifan/belzutifan_simulated_nested5_20260518_210341/shap_waterfalls_explainer_calculator_rsf",
+  "ARTIFACTS_DIR": "/home/OSUMC.EDU/ozgu02/network/X/Labs/Hasanov/semiha/belzutifan/belzutifan_simulated_nested5_20260518_210341/shap_waterfalls_explainer_calculator_rsf/calculator_artifacts",
+  "ID_COL": "DurableKey",
+  "TIME_COL": "os_time_months",
+  "EVENT_COL": "os_event",
+  "TIME_UNIT": "months",
+  "RNG_SEED": 42,
+  "BACKGROUND": "train_subset",
+  "BG_N": 50,
+  "MAX_DISPLAY": 15,
+  "EXTRA_IDS": [],
+  "high_id": 100000201,
+  "low_id": 100000192,
+  "idx_high": 8,
+  "idx_low": 32
+}
