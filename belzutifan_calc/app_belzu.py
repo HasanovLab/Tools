@@ -458,7 +458,7 @@ app_ui = ui.page_fluid(
     """),
 
     ui.h2(
-        "Belzutifan RCC — OS Prediction (AACR GENIE)",
+        "Belzutifan RCC — OS Prediction",
         style="text-align:center; font-weight:bold; margin:12px 0 10px 0; font-size:1.4rem;",
     ),
 
@@ -528,13 +528,29 @@ def _compute_risk(X_df: pd.DataFrame) -> np.ndarray:
     return _predict_risk(model, X_df)
 
 
+def _get_inner_model(mdl):
+    """Unwrap our stub wrapper to get the actual fitted sksurv/sklearn model."""
+    # Our RSFSkSurvWrapper stores the real model in .model_
+    if hasattr(mdl, "model_") and mdl.model_ is not None:
+        return mdl.model_
+    return mdl
+
+
 def _compute_survival_curve(mdl, df_train_calib, risk_train, x_one, risk_val):
     times = np.linspace(0.0, SURV_HORIZON, 300)
 
-    if hasattr(mdl, "predict_survival_function"):
-        fn = mdl.predict_survival_function(x_one)[0]
-        surv = np.array([fn(t) for t in times], dtype=float)
-        return times, surv
+    # Try direct predict_survival_function on wrapper first
+    inner = _get_inner_model(mdl)
+    for candidate in [mdl, inner]:
+        if hasattr(candidate, "predict_survival_function"):
+            try:
+                X_arr = x_one.values if isinstance(x_one, pd.DataFrame) else np.asarray(x_one)
+                fns = candidate.predict_survival_function(X_arr)
+                fn = fns[0]
+                surv = np.array([fn(t) for t in times], dtype=float)
+                return times, surv
+            except Exception:
+                pass
 
     # Cox recalibration fallback
     df_c = pd.DataFrame({
